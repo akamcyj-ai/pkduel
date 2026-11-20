@@ -222,9 +222,50 @@ function computeKick(c,au,av,p){
  return {kick:[r3(u),r3(v),r3(s)],label};
 }
 
+/* ================= 컴퓨터(AI) ================= */
+const DIFF={
+ easy:{label:'쉬움',err:0.2,read:0,corner:0.2,note:'😊 컴퓨터가 가운데 쪽으로 차고, 파워 실수도 많아요.'},
+ normal:{label:'보통',err:0.1,read:0.35,corner:0.5,note:'⚽ 적당히 구석을 노리고, 가끔 내 버릇을 읽어요.'},
+ hard:{label:'어려움',err:0.045,read:0.6,corner:0.8,note:'🔥 구석을 정확히 노리고, 내가 자주 차는 방향을 기억해요!'}
+};
+const pickRand=a=>a[Math.floor(Math.random()*a.length)];
+function cpuKick(c){
+ const d=DIFF[S.diff]||DIFF.normal;
+ let au,av;
+ if(Math.random()<d.corner){au=Math.random()<0.5?0.08+Math.random()*0.14:0.78+Math.random()*0.14;av=Math.random()<0.5?0.15+Math.random()*0.2:0.6+Math.random()*0.25}
+ else{au=0.3+Math.random()*0.4;av=0.15+Math.random()*0.6}
+ const p=clamp(0.75+gauss()*d.err,0,1);
+ return computeKick(c,au,av,p).kick;
+}
+function cpuDive(G,k){
+ const d=DIFF[S.diff]||DIFF.normal;
+ // 사람의 지난 킥 방향만 참고 (이번 킥은 보지 않음)
+ const hist=G.p[0].kicks.slice(0,k).filter(Boolean);
+ let u,v=0.2+Math.random()*0.6;
+ if(hist.length>=2&&Math.random()<d.read){
+  const cnt=[0,0,0];hist.forEach(h=>cnt[h[0]<0.38?0:h[0]>0.62?2:1]++);
+  let r=Math.random()*hist.length,side=0;while(r>=cnt[side]&&side<2){r-=cnt[side];side++}
+  u=[0.18,0.5,0.82][side]+(Math.random()-0.5)*0.12;
+  const hv=hist.filter(h=>(h[0]<0.38?0:h[0]>0.62?2:1)===side).map(h=>h[1]);
+  if(hv.length)v=clamp(hv.reduce((a,b)=>a+b,0)/hv.length+(Math.random()-0.5)*0.2,0.1,0.9);
+ }else if(S.diff==='easy'&&Math.random()<0.3){u=0.5;v=0.5}
+ else u=0.1+Math.random()*0.8;
+ return [r3(u),r3(v)];
+}
+function cpuMove(G,t,need){
+ const key=t+':'+need;if(S.cpuPending===key)return;S.cpuPending=key;
+ const p=$('#panel');if(p)p.innerHTML=`<div class="wait">🤖 컴퓨터가 ${need==='kick'?'조준하는':'방향을 고르는'} 중…</div>`;
+ setTimeout(()=>{
+  if(S.screen!=='play'||S.cpuPending!==key)return;
+  const {ki,k}=turnInfo(t);
+  const val=need==='kick'?cpuKick(KMAP[G.p[ki].kicker]):cpuDive(G,k);
+  submit(need,t,val);
+ },700+Math.random()*700);
+}
+
 /* ================= 상태 ================= */
 const S={screen:'home',mode:null,name:LS.get('pk-name')||'',room:undefined,nroom:null,code:'',role:null,me:null,opp:null,conn:false,
- L:null,holder:-1,shown:0,anim:false,inp:null,sceneT:-1,win:null};
+ L:null,cpu:false,diff:LS.get('pk-diff')||'normal',cpuPending:null,holder:-1,shown:0,anim:false,inp:null,sceneT:-1,win:null};
 const myIdx=()=>S.role==='host'?0:1;
 function getG(){
  if(S.mode==='local')return S.L;
@@ -339,6 +380,8 @@ function rHome(){
  ${onlineState}
  <div class="row"><button class="btn" data-a="create" ${S.room?'':'disabled'}>방 만들기</button><button class="btn sec" data-a="gojoin" ${S.room?'':'disabled'}>방 번호로 참가</button></div>
  ${sess&&S.room?`<button class="btn sec small" data-a="resume">↩︎ 이어하기 (방 ${esc(sess.code)})</button>`:''}
+ <h2>🤖 혼자서 컴퓨터와 대결</h2>
+ <button class="btn" data-a="cpu">컴퓨터와 대결하기</button>
  <h2>📱 한 폰으로 둘이 하기</h2>
  <button class="btn sec" data-a="local">폰 하나로 번갈아 하기</button>
  <button class="btn sec small" data-a="help">❓ 게임 방법</button>`;
@@ -382,6 +425,21 @@ function rLobby(){
 }
 function rLocalSetup(){
  const L=S.L;
+ if(S.cpu){
+  const ck=KMAP[L.p[1].kicker],cg=GMAP[L.p[1].keeper];
+  return `<h2>🤖 컴퓨터와 대결</h2>
+  <h2>난이도</h2><div class="seg">${Object.entries(DIFF).map(([k,d])=>`<button class="${S.diff===k?'on':''}" data-a="diff" data-d="${k}">${d.label}</button>`).join('')}</div>
+  <p class="note" id="diffNote">${DIFF[S.diff].note}</p>
+  <h2>킥 횟수</h2>${kicksSeg(L.kicks,'lcfg')}
+  <div class="box"><div class="row" style="align-items:center"><b style="flex:0 0 40px">나</b><input class="tx" data-nm="0" maxlength="8" value="${esc(L.p[0].name)}" style="font-size:16px;padding:10px"></div>
+  <h2 style="font-size:16px">⚽ 내 키커</h2>${picker('0','k',L.p[0].kicker)}<h2 style="font-size:16px;margin-top:4px">🧤 내 골키퍼</h2>${picker('0','g',L.p[0].keeper)}</div>
+  <div class="box" style="text-align:center"><div class="note">🤖 컴퓨터 팀</div>
+  <div style="display:flex;justify-content:center;gap:10px;margin:6px 0">
+   <div>${avSVG(ck).replace('<svg','<svg style="width:70px;height:84px"')}<div style="font-size:12px;font-weight:900">${esc(ck.name)}</div></div>
+   <div>${avSVG(cg).replace('<svg','<svg style="width:70px;height:84px"')}<div style="font-size:12px;font-weight:900">${esc(cg.name)}</div></div></div>
+  <button class="btn sec small" data-a="cpureroll">🎲 컴퓨터 선수 바꾸기</button></div>
+  <button class="btn" data-a="lstart">경기 시작!</button><button class="btn sec small" data-a="home">돌아가기</button>`;
+ }
  const blk=i=>`<div class="box"><div class="row" style="align-items:center"><b style="flex:0 0 40px">${i+1}P</b><input class="tx" data-nm="${i}" maxlength="8" value="${esc(L.p[i].name)}" style="font-size:16px;padding:10px"></div>
   <h2 style="font-size:16px">⚽ 키커</h2>${picker(String(i),'k',L.p[i].kicker)}<h2 style="font-size:16px;margin-top:4px">🧤 골키퍼</h2>${picker(String(i),'g',L.p[i].keeper)}</div>`;
  return `<h2>📱 한 폰으로 둘이 하기</h2><p class="note">키커가 조준하고 나면 폰을 상대에게 넘겨서 골키퍼가 몰래 방향을 정해요.</p>
@@ -401,6 +459,7 @@ function rResult(){
  let title,sub;
  if(w<0){title='무승부!';sub='끝까지 팽팽했어요'}
  else if(S.mode==='online'){title=w===myIdx()?'🏆 승리!':'아쉬운 패배…';sub=`${esc(wn.name)} 승리`}
+ else if(S.cpu){title=w===0?'🏆 승리!':'🤖 컴퓨터 승리…';sub=w===0?`컴퓨터(${DIFF[S.diff].label})를 이겼어요!`:'다시 도전해 봐요!'}
  else{title=`🏆 ${esc(wn.name)} 승리!`;sub='축하해요!'}
  return `<div class="res"><div class="big">${title}</div><div class="note">${sub}</div>
  ${wn?avSVG(KMAP[wn.kicker],'av'):''}
@@ -458,7 +517,7 @@ function updBoard(G,n){
  const {g,marks}=tally(G,n),N=G.kicks;
  const len=Math.max(N,marks[0].length,marks[1].length);
  el.innerHTML=[0,1].map(i=>{let d='';for(let j=0;j<len;j++){const m=marks[i][j];d+=`<span class="dot ${m===1?'g':m===0?'x':''}"></span>`}
-  const me=S.mode==='online'&&i===myIdx();
+  const me=(S.mode==='online'&&i===myIdx())||(S.cpu&&i===0&&G.p[0].name!=='나');
   return `<div class="prow">${avSVG(KMAP[G.p[i].kicker])}<span class="nm">${esc(G.p[i].name)}${me?' <span style="color:var(--acc);font-size:11px">(나)</span>':''}</span><span class="sc">${g[i]}</span><div class="dots">${d}</div></div>`}).join('');
 }
 
@@ -480,7 +539,8 @@ function advance(){
  let need=null,who=-1;
  if(S.mode==='online'){const mi=myIdx();if(mi===ki&&!G.p[ki].kicks[k])need='kick';else if(mi===gi&&!G.p[gi].dives[k])need='keep'}
  else{if(!G.p[ki].kicks[k]){need='kick';who=ki}else{need='keep';who=gi}
-  if(S.holder!==who){clearInput();showHandoff(G,who,need);return}}
+  if(S.cpu&&who===1){clearInput();cpuMove(G,t,need);return}
+  if(!S.cpu&&S.holder!==who){clearInput();showHandoff(G,who,need);return}}
  if(need){if(!S.inp||S.inp.t!==t||S.inp.role!==need)startInput(need,t,G)}
  else{clearInput();showWait(G,t)}
 }
@@ -615,7 +675,8 @@ function playAnim(G,t,r){
   const txt={goal:'골~~!! ⚽',save:'선방!! 🧤',miss:'빗나갔다!',post:'골대 강타!'}[r.type];
   bt.textContent=txt;bt.setAttribute('fill',r.type==='goal'?'#ffd43b':r.type==='save'?'#74c0fc':'#ff8787');bt.setAttribute('opacity',1);
   if(r.type==='goal'){sfx.goal();buzz([80,40,160])}else if(r.type==='save'){sfx.save();buzz(120)}else{sfx.miss();buzz(60)}
-  const mine=S.mode==='online'?(ki===myIdx()?(r.type==='goal'?'내 슛 성공!':'아깝다… 내 슛이 막혔어'):(r.type==='goal'?'실점… 다음엔 막자!':'막아냈다! 👏')):'';
+  const mi=S.mode==='online'?myIdx():S.cpu?0:-1;
+  const mine=mi>=0?(ki===mi?(r.type==='goal'?'내 슛 성공!':'아깝다… 내 슛이 막혔어'):(r.type==='goal'?'실점… 다음엔 막자!':'막아냈다! 👏')):'';
   $('#panel').innerHTML=`<div class="wait" style="font-size:20px;font-weight:900;color:var(--txt)">${txt}<br><span class="note">${mine}</span></div>`;
   updBoard(G,t+1);
  }
@@ -632,7 +693,7 @@ document.addEventListener('click',e=>{
  const el=e.target.closest('[data-a]');if(!el)return;
  const a=el.dataset.a;
  switch(a){
-  case 'home':leaveRoom();S.screen='home';S.mode=null;render();break;
+  case 'home':leaveRoom();S.screen='home';S.mode=null;S.cpu=false;render();break;
   case 'help':S.screen='help';render();break;
   case 'reload':e.preventDefault();location.reload();break;
   case 'create':{if(!S.name){toast('이름을 먼저 적어주세요');$('#nm')&&$('#nm').focus();return}
@@ -646,10 +707,13 @@ document.addEventListener('click',e=>{
    else{const p=S.L.p[+who];if(kind==='k')p.kicker=id;else p.keeper=id}
    el.parentNode.querySelectorAll('.card').forEach(c=>c.classList.toggle('sel',c===el));break}
   case 'ready':S.me.ready=!S.me.ready;S.me.name=S.name||S.me.name;pushMe();onRoom();break;
-  case 'quit':{leaveRoom();LS.del('pk-sess');closeOvl();S.screen='home';S.mode=null;render();break}
-  case 'local':S.mode='local';S.L={kicks:5,p:[{name:S.name||'아빠',kicker:'haru',keeper:'moon',kicks:[],dives:[]},{name:'아들',kicker:'dash',keeper:'cat',kicks:[],dives:[]}]};S.screen='localSetup';render();break;
+  case 'quit':{leaveRoom();LS.del('pk-sess');closeOvl();S.screen='home';S.mode=null;S.cpu=false;render();break}
+  case 'cpu':S.mode='local';S.cpu=true;S.L={kicks:5,p:[{name:S.name||'나',kicker:'haru',keeper:'moon',kicks:[],dives:[]},{name:'컴퓨터',kicker:pickRand(KICKERS).id,keeper:pickRand(KEEPERS).id,kicks:[],dives:[]}]};S.screen='localSetup';render();break;
+  case 'diff':S.diff=el.dataset.d;LS.set('pk-diff',S.diff);el.parentNode.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===el));$('#diffNote').textContent=DIFF[S.diff].note;break;
+  case 'cpureroll':S.L.p[1].kicker=pickRand(KICKERS).id;S.L.p[1].keeper=pickRand(KEEPERS).id;render();break;
+  case 'local':S.cpu=false;S.mode='local';S.L={kicks:5,p:[{name:S.name||'아빠',kicker:'haru',keeper:'moon',kicks:[],dives:[]},{name:'아들',kicker:'dash',keeper:'cat',kicks:[],dives:[]}]};S.screen='localSetup';render();break;
   case 'lcfg':S.L.kicks=+el.dataset.n;el.parentNode.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===el));break;
-  case 'lstart':S.L.p.forEach(p=>{p.kicks=[];p.dives=[]});S.holder=-1;startPlay();break;
+  case 'lstart':S.L.p.forEach(p=>{p.kicks=[];p.dives=[]});S.holder=-1;S.cpuPending=null;startPlay();break;
   case 'takeover':S.holder=+el.dataset.who;closeOvl();advance();break;
   case 'shoot':doShoot(false);break;
   case 'dive':doDive(false);break;
