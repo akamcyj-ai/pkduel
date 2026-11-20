@@ -1,0 +1,31 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.3
+
+      - name: Bundle PeerJS
+        run: curl -fsSL -o app/src/main/assets/peerjs.min.js https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js || true
+
+      - name: Build
+        run: gradle assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 승부차기대결-apk
+          path: app/build/outputs/apk/debug/*.apk
